@@ -1,37 +1,22 @@
 import pyodbc
 import pandas as pd
 import numpy as np
-import math
+from pytictoc import TicToc
 import datetime
 import os
 from patsy import dmatrices,dmatrix
 from sklearn.linear_model import LogisticRegression
 import statsmodels.discrete.discrete_model as sm
-
-# class sklearn.linear_model.LogisticRegression
-
-now = datetime.datetime.now()
-now_tz=datetime.datetime.now().astimezone().tzinfo
-now = pd.Timestamp(now).tz_localize(now_tz)
-
-#import matplotlib.pyplot as plt
-#from statsmodels.distributions.empirical_distribution import ECDF
-
-# dr="D:/ServiceDisruption/Zihan_Data/Model_SQL_R/TaskScheduler/Auto_result/DelayPredictor/"
-# today=now.strftime("%b%d")
-# lastday=(now+datetime.timedelta(-1)).strftime("%b%d")
-# path=dr+today
-# if not os.path.exists(path):
-#     os.makedirs(path)
-# os.chdir(path)
-
-#===========================================================
-#Data Preprocessing
-#===========================================================
+t = TicToc()
 timezones = {'Timezone': [-5, -6, -7, -12, -8, -9, -10],
              'tz': ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix',
                     'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu']}
 timezones_df = pd.DataFrame(data=timezones)
+now = datetime.datetime.now()
+now_tz=datetime.datetime.now().astimezone().tzinfo
+now = pd.Timestamp(now).tz_localize(now_tz)
+
+
 
 def Process_histdata(hist_load_df):
     hist_load_df['latebooking'] = 0
@@ -66,6 +51,7 @@ def Process_histdata(hist_load_df):
             if hist_load_df.loc[i]['dist'] > speed_highway * travel_hour:  # assume daily miles, 600mile
                 filteroutid.append(hist_load_df.loc[i]['LoadID'])
         else:
+            #print (i)
             # speed= np.where( hist_load_df.loc[i]['dist'] < 100, speed_local, speed_highway)
             dispatch = pd.Timestamp(hist_load_df.loc[i]['Dispatch_Time'],tz='UTC').tz_convert(localtz)
             Appt = pd.Timestamp(hist_load_df.loc[i]['Appt'],tz=localtz)
@@ -82,8 +68,9 @@ def Process_histdata(hist_load_df):
                 (lead_dispatch.days * 24 * 60 + lead_dispatch.seconds / 60) < 121, 1, 0)
             hist_load_df.loc[i]['PreStop_OnTime'] = 1 - hist_load_df.loc[i]['latedispatch']
     hist_load_select = hist_load_df[~hist_load_df['LoadID'].isin(filteroutid)]
-    hist_load_select.to_csv("histdata" + now().strftime("%Y%m%d") + '.csv', index=False)
+    hist_load_select.to_csv("histdata" + now.strftime("%Y%m%d") + '.csv', index=False)
     return hist_load_select
+
 
 def Get_Histload_ALL():
 #if __name__ == "__main__":
@@ -145,7 +132,7 @@ def Get_Histload_ALL():
         ORDER BY NEWID() )C
 
         """
-    query_histload= """
+    query_histload = """
     set nocount on
     declare @date as date = GETDATE() 
     If(OBJECT_ID('tempdb..#Load_ID_Z') Is Not Null)
@@ -154,7 +141,7 @@ def Get_Histload_ALL():
     End
     Create Table #Load_ID_Z (LoadID int)
     Insert into #Load_ID_Z (LoadID)
-    
+
     SELECT  
     L.[ID] 'LoadID'
     FROM [Bazooka].[dbo].[Load] L 
@@ -170,7 +157,7 @@ def Get_Histload_ALL():
     and CUS.[Name] not like '%sears%'
     and CUS.[Name] not like '%upsds%' 
     and CUS.[Name] not like 'UPS%'    
-    
+
 
     --If(OBJECT_ID('tempdb..#HistLoad_Z ') Is Not Null)
     --Begin
@@ -178,7 +165,7 @@ def Get_Histload_ALL():
     --End
     --Create Table #HistLoad_Z  (LoadID int, Loadtype varchar(10), CustomerID int, NumStops int, ProgressType int, StopSequence int, NextStopDistance float, FacilityID int, CityID int, Statecode varchar(10), Timezone int, PDType int, Code varchar(10), Appt datetime, CarrierID int,Empty_Dist float, Empty_Time datetime, Dispatch_Time datetime, Arrival datetime, Departure datetime,  BookTimeUTC datetime )
     --Insert into #HistLoad_Z   
-    
+
     select  
     L.[ID] 'LoadID'
     ,convert(date,loaddate) 'LoadDate'
@@ -193,7 +180,7 @@ def Get_Histload_ALL():
     ,LS.StateCode
     ,case when LS.StateCode like 'AZ' then -12 
     when LS.StateCode in ('AL', 'MN', 'MO','MS','WI') then -6
-    when LS.StateCode in ('NJ', 'NY', 'OH','PA','SC') then -5
+    when LS.StateCode in ('NJ', 'NY', 'OH','PA','SC','NC') then -5
     when LS.StateCode in ('NV','WY') then -7
     when LS.StateCode like 'CA' then -8
     when LS.StateCode like 'FL' and CT.TimeZoneOffset=-6 and CT.Longitude>-84 then -5
@@ -240,38 +227,40 @@ def Get_Histload_ALL():
                      where [Action] = 1  and  LT.LoadID  in (select * from #Load_ID_Z)
                      group by LT.[LoadID] )
     """
-    hist_load=pd.read_sql(query_histload,cn)
+    hist_load = pd.read_sql(query_histload, cn)
     hist_load_id = pd.read_sql(query_randomloads, cn)
 
-    hist_load['ontime'] = np.where((hist_load.Arrival - hist_load.Appt)<=datetime.timedelta(0, 3600), 1, 0)
-    hist_load['duration'] = (hist_load.Departure - hist_load.Arrival).astype('timedelta64[m]')   # duration in minute
+    hist_load['ontime'] = np.where((hist_load.Arrival - hist_load.Appt) <= datetime.timedelta(0, 3600), 1, 0)
+    hist_load['duration'] = (hist_load.Departure - hist_load.Arrival).astype('timedelta64[m]')  # duration in minute
 
-    hist_frate=hist_load.groupby(['FacilityID','PDType'])['ontime'].agg(['mean', 'count']).reset_index()
-    hist_frate.columns=['FacilityID','PDType','f_rate', 'fvolume']
+    hist_frate = hist_load.groupby(['FacilityID', 'PDType'])['ontime'].agg(['mean', 'count']).reset_index()
+    hist_frate.columns = ['FacilityID', 'PDType', 'f_rate', 'fvolume']
     hist_fduration = hist_load.groupby(['FacilityID', 'PDType'])['duration'].agg(['mean']).reset_index()
     hist_fduration.columns = ['FacilityID', 'PDType', 'hist_Duration']
     hist_load_f = pd.merge(left=hist_frate, right=hist_fduration, left_on=['FacilityID', 'PDType'],
+                           right_on=['FacilityID', 'PDType'], how='left')
+    hist_load_all = pd.merge(left=hist_load, right=hist_load_f[hist_load_f.fvolume > 10],
+                             left_on=['FacilityID', 'PDType'],
                              right_on=['FacilityID', 'PDType'], how='left')
-    hist_load_all = pd.merge(left=hist_load, right=hist_load_f[hist_load_f.fvolume>10], left_on=['FacilityID', 'PDType'],
-                             right_on=['FacilityID', 'PDType'],how='left')
 
     hist_cityrate = hist_load.groupby(['CityID', 'PDType'])['ontime'].agg(['mean', 'count']).reset_index()
-    hist_cityrate.columns = ['CityID', 'PDType','cityrate', 'cityvolume']
+    hist_cityrate.columns = ['CityID', 'PDType', 'cityrate', 'cityvolume']
     hist_cityduration = hist_load.groupby(['CityID', 'PDType'])['duration'].agg(['mean']).reset_index()
-    hist_cityduration.columns = ['CityID', 'PDType','city_duration']
+    hist_cityduration.columns = ['CityID', 'PDType', 'city_duration']
     hist_load_city = pd.merge(left=hist_cityrate, right=hist_cityduration, left_on=['CityID', 'PDType'],
-                           right_on=['CityID', 'PDType'], how='left')
-    hist_load_all = pd.merge(left=hist_load_all, right=hist_load_city[hist_load_city.cityvolume>10], left_on=['CityID', 'PDType'],
-                           right_on=['CityID', 'PDType'], how='left')
+                              right_on=['CityID', 'PDType'], how='left')
+    hist_load_all = pd.merge(left=hist_load_all, right=hist_load_city[hist_load_city.cityvolume > 10],
+                             left_on=['CityID', 'PDType'],
+                             right_on=['CityID', 'PDType'], how='left')
 
     hist_carrierrate = hist_load.groupby(['CarrierID', 'PDType'])['ontime'].agg(['mean', 'count']).reset_index()
     hist_carrierrate.columns = ['CarrierID', 'PDType','carrier_rate','carrier_volume']
     hist_custrrate = hist_load.groupby(['CustomerID', 'PDType'])['ontime'].agg(['mean', 'count']).reset_index()
     hist_custrrate.columns = ['CustomerID', 'PDType', 'cust_rate','cust_volume']
-    hist_load_all = pd.merge(left=hist_load_all,right=hist_carrierrate[hist_carrierrate.carrier_volume>10],
-                             left_on=['CarrierID','PDType'], right_on=['CarrierID','PDType'],how='left')
-    hist_load_all = pd.merge(left=hist_load_all, right=hist_custrrate[hist_custrrate.cust_volume > 10],
-                             left_on=['CustomerID', 'PDType'], right_on=['CustomerID', 'PDType'],how='left')
+    hist_load_all = pd.merge(left=hist_load_all, right=hist_carrierrate[hist_carrierrate.cvolume > 10],
+                             left_on=['CarrierID', 'PDType'], right_on=['CarrierID', 'PDType'], how='left')
+    hist_load_all = pd.merge(left=hist_load_all, right=hist_custrrate[hist_custrrate.cvolume > 10],
+                             left_on=['CustomerID', 'PDType'], right_on=['CustomerID', 'PDType'], how='left')
 
     hist_load_all['f_rate'].fillna(hist_load_all['cityrate'], inplace=True)
     hist_load_all['f_rate'].fillna(hist_load_all['f_rate'].mean(axis=0), inplace=True)
@@ -280,24 +269,28 @@ def Get_Histload_ALL():
     hist_load_all['carrier_rate'].fillna(hist_load_all['carrier_rate'].mean(axis=0), inplace=True)
     hist_load_all['cust_rate'].fillna(hist_load_all['cust_rate'].mean(axis=0), inplace=True)
 
-    hist_load_select = pd.merge(left=hist_load_all[hist_load_all['LoadID'].isin (hist_load_id.LoadID.tolist())],
-                             right=timezones_df,
-                             left_on=['Timezone'], right_on=['Timezone'], how='left')
-    #hist_load_all.Appt=hist_load_all.Appt.tz_localize(hist_load_all.tz)
+    hist_load_select = pd.merge(left=hist_load_all[hist_load_all['LoadID'].isin(hist_load_id.LoadID.tolist())],
+                                right=timezones_df,
+                                left_on=['Timezone'], right_on=['Timezone'], how='left')
+    # hist_load_all.Appt=hist_load_all.Appt.tz_localize(hist_load_all.tz)
 
-    #hist_load_all['Empty_Time']=hist_load_all['Empty_Time'].astimezone(hist_load_all['tz'])
+    # hist_load_all['Empty_Time']=hist_load_all['Empty_Time'].astimezone(hist_load_all['tz'])
 
-    hist_load_df=hist_load_select[['LoadID', 'Loadtype', 'CarrierID','CustomerID','FacilityID','NumStops', 'ProgressType',
-                                'StopSequence','NextStopDistance','StateCode','tz','PDType', 'Code', 'Appt',
-                                'Empty_Time', 'Dispatch_Time', 'Arrival', 'Departure', 'BookTimeUTC','Empty_Dist',
-                                'ontime', 'duration', 'hist_Duration','f_rate','carrier_rate','cust_rate']]
-    hist_load_data=Process_histdata(hist_load_df)
-## This part (ratio) can be set within SQL and saved in SQL to update every week.
-    hist_load_f.to_csv('hist_load_f.csv',index=False)
-    hist_load_city.to_csv('hist_load_city.csv',index=False)
-    hist_custrrate.to_csv('hist_custrrate.csv',index=False)
-    hist_carrierrate.to_csv('hist_carrierrate.csv',index=False)
+    hist_load_df = hist_load_select[
+        ['LoadID', 'Loadtype', 'CarrierID', 'CustomerID', 'FacilityID', 'NumStops', 'ProgressType',
+         'StopSequence', 'NextStopDistance', 'StateCode', 'tz', 'PDType', 'Code', 'Appt',
+         'Empty_Time', 'Dispatch_Time', 'Arrival', 'Departure', 'BookTimeUTC', 'Empty_Dist',
+         'ontime', 'duration', 'hist_Duration', 'f_rate', 'carrier_rate', 'cust_rate']].sort_values(by=['LoadID','StopSequence'])
+    
+    hist_load_df.to_csv("hist_temp.csv", index=False)
+    ## This part (ratio) can be set within SQL and saved in SQL to update every week.
+    hist_load_f.to_csv('hist_load_f.csv', index=False)
+    hist_load_city.to_csv('hist_load_city.csv', index=False)
+    hist_custrrate.to_csv('hist_custrrate.csv', index=False)
+    hist_carrierrate.to_csv('hist_carrierrate.csv', index=False)
+    hist_load_data = Process_histdata(hist_load_df)
     return (hist_load_data)
+
 
 def HOS_checking(prestop, stop, travtime):
     # travtime unit in seconds
@@ -313,14 +306,14 @@ def HOS_checking(prestop, stop, travtime):
     prestop_tz = prestop['tz']
     stop_tz = stop.tz
 
-    if  pd.Timestamp(prestop['Arrival']).strftime("%Y")  != '1753':
-        prestop_start = pd.Timestamp(prestop['Arrival'],tz=prestop_tz)
+    if pd.Timestamp(prestop['Arrival']).strftime("%Y") != '1753':
+        prestop_start = pd.Timestamp(prestop['Arrival'], tz=prestop_tz)
 
     else:
-        prestop_start = pd.Timestamp(prestop['Appt'],tz=prestop_tz)
+        prestop_start = pd.Timestamp(prestop['Appt'], tz=prestop_tz)
 
     if (stop['StopSequence'] == 2):
-        loadempty = pd.Timestamp(prestop['Empty_Time'],tz=prestop_tz)
+        loadempty = pd.Timestamp(prestop['Empty_Time'], tz=prestop_tz)
 
         if (prestop_start - loadempty) >= datetime.timedelta(0, 3600 * 10):
             onduty_start = prestop_start
@@ -331,7 +324,7 @@ def HOS_checking(prestop, stop, travtime):
         onduty_start = prestop_start
 
     if prestop['Departure'].strftime("%Y") != '1753':
-        prestop_end = pd.Timestamp(prestop['Departure'],tz=prestop_tz)
+        prestop_end = pd.Timestamp(prestop['Departure'], tz=prestop_tz)
         onduty_stop = (prestop_end - onduty_start).days * 24 * 60 + (prestop_end - onduty_start).seconds / 60
         # all units are in minutes
     else:
@@ -363,14 +356,15 @@ def HOS_checking(prestop, stop, travtime):
 
     if pd.Timestamp(stop['Arrival']).strftime("%Y") == '1753':
         ETA = (datetime.timedelta(0, (HOS * 10 + travtime + mealtime) * 3600) + prestop_end).tz_convert(stop_tz)
-        if ETA - pd.Timestamp(stop['Appt'],tz=stop_tz) > datetime.timedelta(0.3600):
+        if ETA - pd.Timestamp(stop['Appt'], tz=stop_tz) > datetime.timedelta(0.3600):
             if (HOS > 0):
                 Reason = "Scheduling/HOS--ETA_Delay"
             else:
                 Reason = "ETA_Delay"
     else:
-        ETA = pd.Timestamp(stop['Arrival'],tz=stop_tz)
+        ETA = pd.Timestamp(stop['Arrival'], tz=stop_tz)
     return (ETA, Reason)
+
 
 def Get_Dynamic_load():
     hist_load_f = pd.read_csv('hist_load_f.csv')
@@ -607,187 +601,9 @@ def Get_Dynamic_load():
     daily_load_select.to_csv("testdata" + now.strftime("%Y%m%d") + ".csv", index=False)
     return (daily_load_select)
 
-def Ontime_Score(testData,threshold):
-    relaxation = 0.98
-    threshold=threshold * relaxation
-    A_P = 1
-    D_M = 0
-    # thresholds<-quantile(testData$ontime_prob,c(D_level,C_level,B_level,A_level),names=FALSE)
-    thresholdscore = 50.0
-    for i in testData.index():
-        if  testData['ontime_prob'].loc[i] > threshold:
-            lowerbound = threshold
-            upperbound = A_P
-            L_score = thresholdscore / 20
-            H_score = 5
-        else:
-            lowerbound = D_M
-            upperbound = threshold
-            H_score  = thresholdscore / 20
-            L_score = 0
-
-        testData['SafeScore'].loc[i]=(L_score+(testData['SafeScore'].loc[i]-lowerbound) * (H_score-L_score) / (upperbound-lowerbound))
-    testData[testData['ETA_ontime']==0 & testData['StopSequence']==1 & (testData['ETA'].loc[i] -  testData['Appt'].loc[i] <= datetime.timedelta(0,90*60)) ]['CheckScore']=80
-    testData[testData['ETA_ontime']==0 & testData['StopSequence']==1 & (testData['ETA'].loc[i] -  testData['Appt'].loc[i] > datetime.timedelta(0,90*60)) ]['CheckScore']=20
-    testData[testData['ETA_ontime']==0 & testData['StopSequence']>1 ]['CheckScore']=20
-    testData[testData['Arrival'].strftime("%Y")>'1753'  & testData['Arrival'].loc[i] -  testData['Appt'].loc[i] > datetime.timedelta(0,60*60) ]['CheckScore']=100
-    testData[testData['Arrival'].strftime("%Y")>'1753'  & testData['Arrival'].loc[i] -  testData['Appt'].loc[i] <= datetime.timedelta(0,60*60) ]['CheckScore']=0
-
-    return (testData)
-
-def Reason(coef,output,input,flag):
-    if flag==1:
-        names = ["preStop_OnTime", "preStop_Duration", "dist", "f_rate", "cus_rate"]
-        reasons = ["PreStop_Delay", "PreStop_Duration", "Distance", "Facility", "Customer"]
-    if flag==2:
-        names = ["preStop_OnTime", "preStop_Duration", "dist", "f_rate", "cus_rate","carrier_rate","latebooking"]
-        reasons = ["PreStop_Delay", "PreStop_Duration", "Distance", "Facility", "Customer","Carrier","Late_Book"]
-    if flag==3:
-        names = ["preStop_OnTime", "preStop_Duration", "dist", "f_rate", "cus_rate","carrier_rate"]
-        reasons = ["PreStop_Delay", "PreStop_Duration", "Distance", "Facility", "Customer","Carrier"]
-    refervalue =[]
-    coef = coef[3:]
-    coef=coef.fillna(0, inplace=True)
-    for i in range (0,len(names)):
-        refervalue.append(pd.DataFrame.mean(input[names[i]]))
-    for i in output.index:
-        delta = (output[names].loc[i]-refervalue).tolist() * coef
-        output['Reason'].loc[i] = np.where(output['Reason'].loc[i] == "" or output['Reason'].loc[i].isnull(),reasons[np.argmin(delta)],output['Reason'].loc[i])
-    return (output)
-
-def GML_stage(inputdata,outputdata,flag):
-    # for stage 1, no carrier is booked
-    if flag==1:
-        X_test = dmatrix('C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate', outputdata,
-                         return_type='dataframe')
-        y, X = dmatrices('ontime ~ C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate', inputdata,
-                         return_type='dataframe')
-    elif flag==2:
-        y, X = dmatrices(
-            'ontime ~ C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate + carrier_rate + latebooking',
-            inputdata, return_type='dataframe')
-        X_test = dmatrix(
-            'C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate + carrier_rate + latebooking',
-            outputdata, return_type='dataframe')
-    else:
-        y, X = dmatrices(
-            'ontime ~ C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate + carrier_rate', inputdata,
-            return_type='dataframe')
-        X_test = dmatrix('C(Code)+ preStop_OnTime + preStop_Duration + dist + f_rate + cus_rate + carrier_rate',
-                         outputdata, return_type='dataframe')
-    model = LogisticRegression(fit_intercept=False)
-    mdl = model.fit(X, y)
-    rate = model.predict(X_test)
-    # dummy_ranks = pd.get_dummies(inputdata['Code'], prefix='Code')
-    # cols_to_keep = ['preStop_OnTime','preStop_Duration','dist','f_rate','cus_rate']
-    # data = inputdata[cols_to_keep].join(dummy_ranks.ix[:, 'Code_1':])
-    # data['intercept'] = 1.0
-    return rate,model.coef_
-
-
-def Get_Results(input,output,flag):
-    for Type in set(input['PDType'].tolist()):
-        if len(output[output['PDType']==Type].axes[0])> 0:
-            rate, coef = GML_stage(input[input['PDType' == Type] ], output[output['PDType' == Type]],flag)
-            output[output['PDType'] == Type]['ontime_prob'] = rate
-            threshold = pd.DataFrame.mean(input[input.PDType == Type]['ontime'])
-            output[output['PDType'] == Type] = Ontime_Score (output[output['PDType'] == Type], threshold)
-            output[output['PDType'] == Type]['ontime'] = (rate > threshold * 0.98)
-            output[output['ETA_ontime'] == 0 & output['Arrival'].strftime("%Y") == 1753 & output['Reason'].isin(["","NAN"]) ] = "ETA_Delay"
-            output[output['ETA_ontime'] == 0]["ontime"] = -2
-            if len(output[output['PDType']==Type & output['ontime_prob']<0.95 & output['Arrival'].strftime("%Y")==1753].axes[0])>0:
-                output[output['PDType']==Type  &(output['ontime_prob']<0.95)& output['Arrival'].strftime("%Y")==1753] = Reason(coef,output[output['PDType']==Type  &(output['ontime_prob']<0.95)& output['Arrival'].strftime("%Y")==1753],input[input['PDType']],flag)
-    return (output)
-
-
-def Generate_Results(daily_results):
-    progress =["Available", "Covered", "Dispatched", "Loading Start", "Picked Up", "Unloading Start", "Delivered",
-                  "Invoiced"]
-    # loadtype<-c
-    result_file="DelayPredictor" + now.strftime("%Y%m%d%H%M")+".csv"
-    stoptype =["PickUp", "Delivery"]
-
-    columnnames  =["LoadID","ProgressType","Parent_Customer","LoadType","NextStop_Type","NextStop_City/STate","ETA","RiskScore","LeadingReason"]
-    result_df = pd.DataFrame( columns=columnnames)
-    loadids=set (daily_results['LoadID'].tolist())
-    for lid in loadids:
-        loaddata=daily_results[daily_results['LoadID']==lid]
-        if len(loaddata[loaddata['Arrival'].strf("%Y")=='1753'])>0:
-            nextstop=loaddata[loaddata['Arrival'].strf("%Y")=='1753'].loc[0]
-            result_df=result_df.append({"LoadID":lid,
-                            "ProgressType": progress[int(loaddata.loc[0]['ProgressType'])],
-                            "Parent_Customer":loaddata.loc[0]['Customer'],
-                            "LoadType":loaddata.loc[0]['Load_M_B'],
-                            "NextStop_Type":nextstop[stoptype[int(nextstop['PDType'])]],
-                            "NextStop_City/STate":nextstop['StateCode'],
-                            "ETA":nextstop['ETA'],
-                            "RiskScore":100-nextstop['SafeScore'],
-                            "LeadingReason":nextstop['Reason']
-                                        }, ignore_index=True)
-        else:
-            result_df =result_df.append({"LoadID":lid,
-                            "ProgressType": progress[int(loaddata.loc[0]['ProgressType'])],
-                            "Parent_Customer":loaddata.loc[0]['Customer'],
-                            "LoadType":loaddata.loc[0]['Load_M_B'],
-                            "NextStop_Type":'-',
-                            "NextStop_City/STate":'-',
-                            "ETA":'-',
-                            "RiskScore":'-',
-                            "LeadingReason":'-'}, ignore_index=True)
-    result_df.to_csv(result_file,index=False)
-    return(0)
-
-
-def Roll_Prediction_Model(trainData,testData):
-    #Stage 1
-    testData_1=testData[testData['ProgressType'==1]]
-    if  len(testData_1.axes[0])>0:
-        testData_1[testData_1['StopSequence'] == 1] = Get_Results(trainData[trainData['StopSequence'] == 1],
-                                                                   testData_1[testData_1['StopSequence'] == 1],1)
-    for k in range(2,max(testData_1.NumStops)):
-        for  i in testData_1.index:
-            if  testData_1.loc[i]['StopSequence'] == k:
-                if   testData_1.loc[i-1]['Arrival'] == '1753':
-                    testData_1.loc[i]['preStop_OnTime']= testData_1.loc[i-1]['ontime_prob']
-        testData_1[testData_1['StopSequence']== k]= Get_Results(trainData[trainData ['StopSequence'] == 1],
-                                                                 testData_1[testData_1['StopSequence'] == k],1)
-
-    #Stage 2
-    testData_2 = testData[testData['ProgressType'>1]]
-    testData_2[testData_2['StopSequence' == 1]] = Get_Results(trainData[trainData['StopSequence' == 1]],
-                                                               testData_2[testData_2['StopSequence' == 1]],2)
-    for k in range(2, max(testData_2.NumStops)):
-        for i in testData_2.index:
-            if testData_2.loc[i]['StopSequence'] == k:
-                if testData_2.loc[i - 1]['Arrival'] == '1753':
-                    testData_2.loc[i]['preStop_OnTime'] = testData_2.loc[i - 1]['ontime_prob']
-        testData_2[testData_2['StopSequence'==k]] = Get_Results(trainData[trainData['StopSequence' == 1]],
-                                                                testData_2[testData_2['StopSequence' == k]],3)
-    testData_df=pd.concat([testData_1,testData_2])
-    testData_df['RiskScore'] = 100-testData_df['SafeScore']*20
-
-    result2=testData_df[[
-        "LoadID", "LoadDate", "Customer", "Conference", "ProgressType", "StopSequence", "ontime_prob", "ontime_pred",
-          "SafeScore", "Reason"]]
-
-    result2['RiskScore_2']=np.ceil(result2['SafeScore'])
-    result2.to_csv("OnTime_Predict" + now.strftime("%Y%m%d%H%M") + ".csv",index=False)
-    testData.to_csv("testdata" + now.strftime("%Y%m%d%H%M") + ".csv",index=False)
-
-    numstop = max(testData_df['NumStops'])
-
-    results = testData_df[["LoadID", "LoadDate", "Customer", "Conference", "Load_M_B", "ProgressType", "StopSequence",
-                             "SafeScore", "Reason", "Arrival"]].sort(['LoadDate', 'LoadID'], ascending=[1, 0])
-
-    Generate_Results(results, numstop)
-
-    return (testData_df)
-
-
-#def Delay_predict( ):
 if __name__ == "__main__":
     filename="histdata"+ now.strftime("%Y%m%d") +".csv"
-    if ((os.path.isfile(filename))==False):
+    if ((os.path.isfile(filename))==False   ):
         trainData=Get_Histload_ALL()
         testData=Get_Dynamic_load()
         testloadid=testData['LoadID']
@@ -800,9 +616,3 @@ if __name__ == "__main__":
     testData['SafeScore']=-1
     testData['RiskScore']=-1
     testData['CheckScore']=-1
-
-    #testData = Roll_Prediction_Model(trainData,testData)
-    #testData_df=testData.sort_values(by=['LoadID', 'StopSequence'])
-    #testData_df.to_csv("dailydata_temp.csv",index = False)
-  #Evaluation(testData)
-    #return(0)
