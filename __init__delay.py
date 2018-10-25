@@ -48,7 +48,8 @@ def Process_histdata(hist_load_df):
     # detention = 2
     # workin_hour = 4
     for i in hist_load_df.index:
-        if (abs(hist_load_df.loc[i]['Appt'] - hist_load_df.loc[i]['Arrival']).days >= 1) or hist_load_df.loc[
+        if (abs(pd.Timestamp(hist_load_df['Appt'].iloc[i]) - pd.Timestamp(
+                hist_load_df['Arrival'].iloc[i])).days >= 1) or hist_load_df.loc[
             0].Arrival.strftime('%Y') == '1753':
             filteroutid.append(hist_load_df.loc[i]['LoadID'])
             continue
@@ -56,33 +57,42 @@ def Process_histdata(hist_load_df):
         localtz = loadstop['tz']
         if loadstop['StopSequence'] > 1:
             # prestop=hist_load_df.loc[i-1]
-            hist_load_df.loc[i]['dist'] = hist_load_df.loc[i - 1]['NextStopDistance']
-            hist_load_df.loc[i]['preStop_OnTime'] = hist_load_df.loc[i]['ontime']
-            duration = hist_load_df.loc[i - 1]['duration']
-            hist_load_df.loc[i]['preStop_Duration'] = np.where(duration > 0 and duration < 360), duration, \
-                                                      hist_load_df.loc[i - 1]['hist_Duration']
-            travel_hour = hist_load_df.loc[i]['Arrival'] - hist_load_df.loc[i - 1]['Departure']
+            hist_load_df['dist'].iloc[i] = hist_load_df['NextStopDistance'].iloc[i - 1]
+            hist_load_df['preStop_OnTime'].iloc[i] = hist_load_df['ontime'].iloc[i]
+            duration = hist_load_df['duration'].iloc[i - 1]
+            # hist_load_df['preStop_Duration'].iloc[i] = np.where(duration > 0 and duration < 360, duration, \
+            #                                           hist_load_df['hist_Duration'].iloc[i - 1]).tolist()[0]
+            hist_load_df['preStop_Duration'].iloc[i] = duration if duration > 0 and duration < 360 else hist_load_df['hist_Duration'].iloc[i - 1]
+            travel_hour = pd.Timestamp(hist_load_df['Arrival'].iloc[i]) - pd.Timestamp(
+                hist_load_df['Departure'].iloc[i - 1])
             travel_hour = travel_hour.days * 24 + travel_hour.seconds / 3600  # note there may be another way using astype() same with duration calculation
-            if hist_load_df.loc[i]['dist'] > speed_highway * travel_hour:  # assume daily miles, 600mile
-                filteroutid.append(hist_load_df.loc[i]['LoadID'])
+            if hist_load_df['dist'].iloc[i] > speed_highway * travel_hour:  # assume daily miles, 600mile
+                filteroutid.append(hist_load_df['LoadID'].iloc[i])
         else:
-            # speed= np.where( hist_load_df.loc[i]['dist'] < 100, speed_local, speed_highway)
-            dispatch = pd.Timestamp(hist_load_df.loc[i]['Dispatch_Time'],tz='UTC').tz_convert(localtz)
-            Appt = pd.Timestamp(hist_load_df.loc[i]['Appt'],tz=localtz)
-            #Appt= pd.Timestamp(hist_load_df.loc[i]['Appt'],tz=localtz)
-            Empty_Time = pd.Timestamp(hist_load_df.loc[i]['Empty_Time'],tz=localtz)
-            BookTime = pd.Timestamp(hist_load_df.loc[i]['BookTimeUTC'],tz='UTC').tz_convert(localtz)
-            if dispatch - Appt >= datetime.timedelta(0,0,0):
+            # print (i)
+            hist_load_df['dist'].loc[i]<-hist_load_df['Empty_Dist'].loc[i]
+            speed= speed_local if  hist_load_df.loc[i]['dist'] < 100 else speed_highway
+            hist_load_df['preStop_Duration'].iloc[i] = hist_load_df['dist'].loc[i]/speed
+            dispatch = pd.Timestamp(hist_load_df['Dispatch_Time'].iloc[i], tz='UTC').tz_convert(localtz)
+            Appt = pd.Timestamp(hist_load_df['Appt'].iloc[i], tz=localtz)
+            # Appt= pd.Timestamp(hist_load_df.loc[i]['Appt'],tz=localtz)
+            Empty_Time = pd.Timestamp(hist_load_df['Empty_Time'].iloc[i], tz=localtz)
+            BookTime = pd.Timestamp(hist_load_df['BookTimeUTC'].iloc[i], tz='UTC').tz_convert(localtz)
+            if dispatch - Appt >= datetime.timedelta(0, 0, 0):
                 dispatch = Empty_Time
-            hist_load_df.loc[i]['dispatch_Local'] = dispatch
+            hist_load_df['dispatch_Local'].iloc[i] = dispatch
             leadtime = Appt - BookTime
             lead_dispatch = Appt - dispatch
-            hist_load_df.loc[i]['latebooking'] = np.where((leadtime.days * 24 * 60 + leadtime.seconds / 60) < 241, 1, 0)
-            hist_load_df.loc[i]['latedispatch'] = np.where(
-                (lead_dispatch.days * 24 * 60 + lead_dispatch.seconds / 60) < 121, 1, 0)
-            hist_load_df.loc[i]['PreStop_OnTime'] = 1 - hist_load_df.loc[i]['latedispatch']
+ 
+            # hist_load_df['latebooking'].iloc[i] = np.where((leadtime.days * 24 * 60 + leadtime.seconds / 60) < 241, 1, 0).tolist()
+            # hist_load_df['latedispatch'].iloc[i] = np.where(
+            #     (lead_dispatch.days * 24 * 60 + lead_dispatch.seconds / 60) < 121, 1, 0).tolist()
+            hist_load_df['latebooking'].iloc[i] = 1 if leadtime.days * 24 * 60 + leadtime.seconds / 60 < 241 else 0
+            hist_load_df['latedispatch'].iloc[
+                i] = 1 if lead_dispatch.days * 24 * 60 + lead_dispatch.seconds / 60 < 121 else 0
+            hist_load_df['preStop_OnTime'].iloc[i] = 1 - hist_load_df['latedispatch'].iloc[i]        
     hist_load_select = hist_load_df[~hist_load_df['LoadID'].isin(filteroutid)]
-    hist_load_select.to_csv("histdata" + now().strftime("%Y%m%d") + '.csv', index=False)
+    hist_load_select.to_csv("histdata" + now.strftime("%Y%m%d") + '.csv', index=False)
     return hist_load_select
 
 def Get_Histload_ALL():
@@ -119,7 +129,7 @@ def Get_Histload_ALL():
         SELECT * FROM
 
         (
-        SELECT  top 25000
+        SELECT  top 250
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'A'
@@ -129,7 +139,7 @@ def Get_Histload_ALL():
         UNION
 
         Select * FROM
-        (SELECT  top 5000
+        (SELECT  top 50
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'B'
@@ -138,7 +148,7 @@ def Get_Histload_ALL():
         UNION
 
         Select * FROM
-        (SELECT  top 2000
+        (SELECT  top 20
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'C'
@@ -696,7 +706,7 @@ def GML_stage(inputdata,outputdata,flag):
     model = LogisticRegression(fit_intercept=False)
     mdl = model.fit(X, np.ravel(y))
     rate_result = model.predict(X_test)
-    rate = model.predict_proba(X_test)
+    rate = model.predict_proba(X_test)[:,1]
     # dummy_ranks = pd.get_dummies(inputdata['Code'], prefix='Code')
     # cols_to_keep = ['preStop_OnTime','preStop_Duration','dist','f_rate','cust_rate']
     # data = inputdata[cols_to_keep].join(dummy_ranks.ix[:, 'Code_1':])
@@ -798,7 +808,7 @@ def Roll_Prediction_Model(trainData,testData):
         testData_2[testData_2['StopSequence'] == k] = Get_Results(trainData[trainData['StopSequence'] > 1],testData_2[testData_2['StopSequence'] == k], 3)
     # for k in range(2, max_stop):
     #     #for i in testData_2.index:
-    #     for  i in range(nrow_testData_2):
+    #     for  i in range(nrow_testData_2): 
     #         if testData_2['StopSequence'].iloc[i] == k:
     #             if testData_2['arrived'].iloc[i - 1] == 0:
     #                 testData_2['preStop_OnTime'].iloc[i] = testData_2['ontime_prob'].iloc[i - 1]
@@ -861,5 +871,5 @@ if __name__ == "__main__":
     
     #testData_df=testData.sort_values(by=['LoadID', 'StopSequence'])
     #testData_df.to_csv("dailydata_temp.csv",index = False)
-  #Evaluation(testData)
+    #Evaluation(testData)
     #return(0)
