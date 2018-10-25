@@ -129,7 +129,7 @@ def Get_Histload_ALL():
         SELECT * FROM
 
         (
-        SELECT  top 250
+        SELECT  top 25000
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'A'
@@ -139,7 +139,7 @@ def Get_Histload_ALL():
         UNION
 
         Select * FROM
-        (SELECT  top 50
+        (SELECT  top 5000
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'B'
@@ -148,7 +148,7 @@ def Get_Histload_ALL():
         UNION
 
         Select * FROM
-        (SELECT  top 20
+        (SELECT  top 2000
         L.LoadID
         FROM #LdSet L
         WHERE L.Prt = 'C'
@@ -407,7 +407,7 @@ def Get_Dynamic_load():
         Create Table #Load_ID_Z (LoadID int)
         Insert into #Load_ID_Z (LoadID)
 
-        SELECT distinct top 200
+        SELECT distinct 
         L.[ID] 'LoadID'
         FROM [Bazooka].[dbo].[Load] L
         --inner join Bazooka.dbo.Loadstop LS on LS.LoadID=L.ID
@@ -725,7 +725,7 @@ def Get_Results(traindata,testdata,flag):
             testdata['ontime_pred'][testdata['PDType'] == Type] = (rate > threshold * 0.98)
             testdata["Reason"][(testdata['ETA_ontime'] == 0) &  (testdata['arrived'] == 0 )& (testdata['Reason'].isin(["","NAN"])) ] = "ETA_Delay"
             testdata["ontime_pred"][testdata['ETA_ontime'] == 0] = -2
-            if len(testdata[(testdata['PDType']==Type) & (testdata['ontime_prob']<0.95) & (testdata['arrived'] == 0)].axes[0])>0:
+            if len(testdata[(testdata['PDType']==Type) & (testdata['SafeScore']<2.5) & (testdata['arrived'] == 0)].axes[0])>0:
                 testdata[(testdata['PDType']==Type)  &(testdata['ontime_prob']<0.95)& (testdata['arrived'] == 0)] = Reason(coef,testdata[(testdata['PDType']==Type)  &(testdata['ontime_prob']<0.95)& (testdata['arrived']== 0)],traindata[traindata['PDType']==Type],flag)
     return (testdata)
 
@@ -751,7 +751,7 @@ def Generate_Results(daily_results):
                             'NextStop_Type': stoptype[int(nextstop['PDType'])],
                             'NextStop_City/State':nextstop['StateCode'],
                             'ETA':str(nextstop['ETA']),   # there is a problem in ETA data type
-                            'RiskScore':100-nextstop['SafeScore'],
+                            'RiskScore':int(nextstop['RiskScore']),
                             'LeadingReason':nextstop['Reason']
                                         }
             result_df=result_df.append(stop_result, ignore_index=True)
